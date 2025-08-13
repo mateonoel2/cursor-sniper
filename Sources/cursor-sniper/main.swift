@@ -1,6 +1,7 @@
 import Cocoa
 import Carbon
 import CoreGraphics
+import ApplicationServices
 
 class CursorSniper {
     private var hotKeyRef1: EventHotKeyRef?
@@ -14,7 +15,7 @@ class CursorSniper {
     }
     
     private func setupHotKeys() {
-        var hotKeyID1 = EventHotKeyID(signature: hotKeySignature, id: hotKeyID1)
+        let hotKeyID1 = EventHotKeyID(signature: hotKeySignature, id: hotKeyID1)
         let status1 = RegisterEventHotKey(
             UInt32(kVK_ANSI_1),
             UInt32(cmdKey | controlKey),
@@ -30,7 +31,7 @@ class CursorSniper {
             print("Successfully registered hotkey: Cmd+Ctrl+1")
         }
         
-        var hotKeyID2 = EventHotKeyID(signature: hotKeySignature, id: hotKeyID2)
+        let hotKeyID2 = EventHotKeyID(signature: hotKeySignature, id: hotKeyID2)
         let status2 = RegisterEventHotKey(
             UInt32(kVK_ANSI_2),
             UInt32(cmdKey | controlKey),
@@ -154,6 +155,21 @@ print("Cursor Sniper starting...")
 print("Press Cmd+Ctrl+1 to move cursor to center of first display")
 print("Press Cmd+Ctrl+2 to move cursor to center of second display")
 print("Press Ctrl+C to quit")
+
+func ensureAccessibilityPermissions() -> Bool {
+    let env = ProcessInfo.processInfo.environment
+    let launchedByLaunchd = env["LAUNCH_JOB_LABEL"] != nil
+    let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+    let options = [promptKey: !launchedByLaunchd] as CFDictionary
+    let trusted = AXIsProcessTrustedWithOptions(options)
+    if !trusted {
+        let path = CommandLine.arguments.first ?? "cursor-sniper"
+        print("Accessibility permission is not granted. Enable it in System Settings → Privacy & Security → Accessibility for: \(path)")
+    }
+    return trusted
+}
+
+_ = ensureAccessibilityPermissions()
 
 let cursorSniper = CursorSniper()
 

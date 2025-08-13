@@ -1,27 +1,35 @@
 #!/bin/bash
 
-# Get the current directory (where the cursor-sniper project is located)
-PROJECT_DIR="$(pwd)"
-EXECUTABLE_PATH="$PROJECT_DIR/.build/debug/cursor-sniper"
-PLIST_NAME="com.cursorsniper.app.plist"
-LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+set -euo pipefail
 
 echo "Setting up Cursor Sniper to run on startup..."
 
-# Build the project first
-echo "Building the project..."
-swift build
+PLIST_NAME="com.cursorsniper.app.plist"
+LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+INSTALL_DIR="$HOME/Library/Application Support/cursor-sniper"
+STDOUT_LOG="$HOME/Library/Logs/cursor-sniper.log"
+STDERR_LOG="$HOME/Library/Logs/cursor-sniper-error.log"
 
-if [ $? -ne 0 ]; then
-    echo "Build failed! Please fix any build errors first."
+mkdir -p "$LAUNCH_AGENTS_DIR"
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$(dirname "$STDOUT_LOG")"
+
+echo "Building release binary..."
+BIN_DIR=$(swift build -c release --show-bin-path)
+BIN_PATH="$BIN_DIR/cursor-sniper"
+
+if [ ! -f "$BIN_PATH" ]; then
+    echo "Build did not produce expected binary at: $BIN_PATH"
     exit 1
 fi
 
-# Create LaunchAgents directory if it doesn't exist
-mkdir -p "$LAUNCH_AGENTS_DIR"
+echo "Installing binary to: $INSTALL_DIR"
+cp -f "$BIN_PATH" "$INSTALL_DIR/cursor-sniper"
+chmod +x "$INSTALL_DIR/cursor-sniper"
 
-# Create the plist file
-cat > "$LAUNCH_AGENTS_DIR/$PLIST_NAME" << EOF
+PLIST_PATH="$LAUNCH_AGENTS_DIR/$PLIST_NAME"
+
+cat > "$PLIST_PATH" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -30,36 +38,32 @@ cat > "$LAUNCH_AGENTS_DIR/$PLIST_NAME" << EOF
     <string>com.cursorsniper.app</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$EXECUTABLE_PATH</string>
+        <string>$INSTALL_DIR/cursor-sniper</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/cursor-sniper.log</string>
+    <string>$STDOUT_LOG</string>
     <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/cursor-sniper-error.log</string>
+    <string>$STDERR_LOG</string>
     <key>WorkingDirectory</key>
-    <string>$PROJECT_DIR</string>
+    <string>$INSTALL_DIR</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
 </dict>
 </plist>
 EOF
 
-# Load the launch agent
-echo "Loading launch agent..."
-launchctl load "$LAUNCH_AGENTS_DIR/$PLIST_NAME"
+echo "(Re)loading launch agent..."
+UID_DOMAIN="gui/$(id -u)"
+launchctl bootout "$UID_DOMAIN" "$PLIST_PATH" >/dev/null 2>&1 || true
+launchctl bootstrap "$UID_DOMAIN" "$PLIST_PATH"
+launchctl enable "$UID_DOMAIN/com.cursorsniper.app"
+launchctl kickstart -k "$UID_DOMAIN/com.cursorsniper.app"
 
-if [ $? -eq 0 ]; then
-    echo "✅ Cursor Sniper has been successfully set up to run on startup!"
-    echo ""
-    echo "📍 Configuration file: $LAUNCH_AGENTS_DIR/$PLIST_NAME"
-    echo "📍 Logs will be written to: $HOME/Library/Logs/cursor-sniper.log"
-    echo "📍 Error logs: $HOME/Library/Logs/cursor-sniper-error.log"
-    echo ""
-    echo "The app should start automatically now and on every boot."
-    echo "You can check if it's running with: ps aux | grep cursor-sniper"
-else
-    echo "❌ Failed to load launch agent. Please check for errors."
-    exit 1
-fi 
+echo "✅ Installed. Logs: $STDOUT_LOG, $STDERR_LOG"
+echo "You can inspect with: launchctl print $UID_DOMAIN/com.cursorsniper.app"

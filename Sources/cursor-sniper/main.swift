@@ -1,52 +1,49 @@
-import Cocoa
+import AppKit
 import Carbon
 import CoreGraphics
 import ApplicationServices
 
 class CursorSniper {
-    private var hotKeyRef1: EventHotKeyRef?
-    private var hotKeyRef2: EventHotKeyRef?
+    private struct HotKeyBinding {
+        let id: UInt32
+        let keyCode: UInt32
+        let modifiers: UInt32
+        let displayIndex: Int
+    }
+
+    private var hotKeyRefsById: [UInt32: EventHotKeyRef] = [:]
     private let hotKeySignature: OSType = fourCharCodeFrom("cspr")
-    private let hotKeyID1: UInt32 = 1
-    private let hotKeyID2: UInt32 = 2
+    private let bindings: [HotKeyBinding] = [
+        .init(id: 1, keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(cmdKey | controlKey), displayIndex: 0),
+        .init(id: 2, keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(cmdKey | controlKey), displayIndex: 1)
+    ]
+    private var displayIndexById: [UInt32: Int] = [:]
     
     init() {
         setupHotKeys()
     }
     
     private func setupHotKeys() {
-        let hotKeyID1 = EventHotKeyID(signature: hotKeySignature, id: hotKeyID1)
-        let status1 = RegisterEventHotKey(
-            UInt32(kVK_ANSI_1),
-            UInt32(cmdKey | controlKey),
-            hotKeyID1,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef1
-        )
-        
-        if status1 != noErr {
-            print("Failed to register hotkey Cmd+Ctrl+1: \(status1)")
-        } else {
-            print("Successfully registered hotkey: Cmd+Ctrl+1")
+        for binding in bindings {
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                binding.keyCode,
+                binding.modifiers,
+                EventHotKeyID(signature: hotKeySignature, id: binding.id),
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            if status != noErr {
+                print("Failed to register hotkey id \(binding.id): \(status)")
+                continue
+            }
+            if let ref {
+                hotKeyRefsById[binding.id] = ref
+                displayIndexById[binding.id] = binding.displayIndex
+            }
         }
-        
-        let hotKeyID2 = EventHotKeyID(signature: hotKeySignature, id: hotKeyID2)
-        let status2 = RegisterEventHotKey(
-            UInt32(kVK_ANSI_2),
-            UInt32(cmdKey | controlKey),
-            hotKeyID2,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef2
-        )
-        
-        if status2 != noErr {
-            print("Failed to register hotkey Cmd+Ctrl+2: \(status2)")
-        } else {
-            print("Successfully registered hotkey: Cmd+Ctrl+2")
-        }
-        
+
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
         var handlerRef: EventHandlerRef?
         
@@ -76,19 +73,11 @@ class CursorSniper {
             &hotKeyID
         )
         
-        if status == noErr {
-            let cursorSniper = Unmanaged<CursorSniper>.fromOpaque(userData!).takeUnretainedValue()
-            
-            switch hotKeyID.id {
-            case 1:
-                cursorSniper.moveCursorToDisplay(displayIndex: 0)
-            case 2:
-                cursorSniper.moveCursorToDisplay(displayIndex: 1)
-            default:
-                break
-            }
+        guard status == noErr, let userData = userData else { return noErr }
+        let cursorSniper = Unmanaged<CursorSniper>.fromOpaque(userData).takeUnretainedValue()
+        if let displayIndex = cursorSniper.displayIndexById[hotKeyID.id] {
+            cursorSniper.moveCursorToDisplay(displayIndex: displayIndex)
         }
-        
         return noErr
     }
     
@@ -106,7 +95,7 @@ class CursorSniper {
         
         CGWarpMouseCursorPosition(CGPoint(x: centerX, y: centerY))
         
-        print("Moved cursor to center of display \(displayIndex + 1) at (\(Int(centerX)), \(Int(centerY)))")
+        
     }
     
     private func getDisplays() -> [CGRect] {
@@ -126,18 +115,14 @@ class CursorSniper {
             }
         }
         
-        // Sort displays by x position (left to right)
         displays.sort { $0.origin.x < $1.origin.x }
         
         return displays
     }
     
     deinit {
-        if let hotKeyRef1 = hotKeyRef1 {
-            UnregisterEventHotKey(hotKeyRef1)
-        }
-        if let hotKeyRef2 = hotKeyRef2 {
-            UnregisterEventHotKey(hotKeyRef2)
+        for ref in hotKeyRefsById.values {
+            UnregisterEventHotKey(ref)
         }
     }
 }
@@ -150,11 +135,6 @@ func fourCharCodeFrom(_ string: String) -> FourCharCode {
     }
     return result
 }
-
-print("Cursor Sniper starting...")
-print("Press Cmd+Ctrl+1 to move cursor to center of first display")
-print("Press Cmd+Ctrl+2 to move cursor to center of second display")
-print("Press Ctrl+C to quit")
 
 func ensureAccessibilityPermissions() -> Bool {
     let env = ProcessInfo.processInfo.environment
